@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import type { FiberBatch } from '../types/fiber-batch'
 import type { Mould } from '../types/mould'
+import type { MouldRepair } from '../types/mould-repair'
 import type { PaperSample } from '../types/paper-sample'
 import type { SheetRun } from '../types/sheet-run'
 import { calculateDeviation, calculateMeshDensity } from './stripe'
@@ -54,6 +55,13 @@ const seedRuns: SheetRun[] = [
   { id: 8, runNo: 'CB-260708', mouldId: 5, batchId: 3, runDate: daysAgo(24), operator: '郭文山', stripeDirection: '竖帘纹', dipCount: 2, stackHeight: 46, dryMethod: '火墙', grammage: 44, measuredGap: 0.71, deviation: calculateDeviation(0.71, gap4), schemaRev: 2 },
 ]
 
+const seedMouldRepairs: MouldRepair[] = [
+  { id: 1, mouldId: 4, repairDate: daysAgo(40), repairer: '林砚秋', replacedLengthCm: 18, note: '中段竹丝磨损起毛，临时换过一段，仍有跳线，等新丝到位再补。', schemaRev: 3 },
+  { id: 2, mouldId: 5, repairDate: daysAgo(120), repairer: '沈云舟', replacedLengthCm: 22, note: '右下角铜丝锈蚀断裂，整段更换后张力不均。', schemaRev: 3 },
+  { id: 3, mouldId: 5, repairDate: daysAgo(60), repairer: '周守良', replacedLengthCm: 35, note: '帘框变形无法校平，记录留档后退役。', schemaRev: 3 },
+  { id: 4, mouldId: 1, repairDate: daysAgo(55), repairer: '周守良', replacedLengthCm: 12, note: '边缘竹丝劈裂，替换后帘纹复测正常。', schemaRev: 3 },
+]
+
 const seedSamples: PaperSample[] = [
   { id: 1, sampleNo: 'YZ-01', runId: 1, sizeMm: 210, stripeCount: 46, evenness: '均匀', archiveBin: '甲柜-03', schemaRev: 2 },
   { id: 2, sampleNo: 'YZ-02', runId: 2, sizeMm: 180, stripeCount: 52, evenness: '略花', archiveBin: '甲柜-07', schemaRev: 2 },
@@ -65,6 +73,7 @@ const seedSamples: PaperSample[] = [
 
 class GbPaperMillDatabase extends Dexie {
   moulds!: Table<Mould, number>
+  mouldRepairs!: Table<MouldRepair, number>
   fiberBatches!: Table<FiberBatch, number>
   sheetRuns!: Table<SheetRun, number>
   paperSamples!: Table<PaperSample, number>
@@ -96,11 +105,19 @@ class GbPaperMillDatabase extends Dexie {
         value.schemaRev = 2
       })
     })
+    this.version(3).stores({
+      moulds: '++id,&mouldNo,state,wireMaterial,schemaRev',
+      mouldRepairs: '++id,mouldId,repairDate,repairer,schemaRev',
+      fiberBatches: '++id,&batchNo,material,beatingDegree,schemaRev',
+      sheetRuns: '++id,&runNo,mouldId,batchId,runDate,operator,schemaRev',
+      paperSamples: '++id,&sampleNo,runId,evenness,stripeCount,schemaRev',
+    })
     this.on('populate', () => this.seed())
   }
 
   private async seed(): Promise<void> {
     await this.moulds.bulkAdd(plain(seedMoulds))
+    await this.mouldRepairs.bulkAdd(plain(seedMouldRepairs))
     await this.fiberBatches.bulkAdd(plain(seedBatches))
     await this.sheetRuns.bulkAdd(plain(seedRuns))
     await this.paperSamples.bulkAdd(plain(seedSamples))

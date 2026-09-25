@@ -1,8 +1,9 @@
 import { db, plain } from './db'
 
 export async function exportDatabaseJson(): Promise<string> {
-  const [moulds, fiberBatches, sheetRuns, paperSamples] = await Promise.all([
+  const [moulds, mouldRepairs, fiberBatches, sheetRuns, paperSamples] = await Promise.all([
     db.moulds.toArray(),
+    db.mouldRepairs.toArray(),
     db.fiberBatches.toArray(),
     db.sheetRuns.toArray(),
     db.paperSamples.toArray(),
@@ -10,9 +11,10 @@ export async function exportDatabaseJson(): Promise<string> {
   const filename = `gbpapermill-backup-${new Date().toISOString().slice(0, 10)}.json`
   const backup = plain({
     database: 'gbpapermill-db',
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     moulds,
+    mouldRepairs,
     fiberBatches,
     sheetRuns,
     paperSamples,

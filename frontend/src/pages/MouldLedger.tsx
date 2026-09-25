@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Box, Button, Card, CardContent, Chip, Divider, Grid, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, Grid, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material'
 import { GrainStripePreview } from '../components/common/GrainStripePreview'
 import { RulerInput } from '../components/common/RulerInput'
 import { useMouldFilter } from '../hooks/useMouldFilter'
 import { useUnitConvert } from '../hooks/useUnitConvert'
+import { useMouldRepairStore } from '../stores/mouldRepairStore'
 import { useMouldStore } from '../stores/mouldStore'
 import { useRunStore } from '../stores/runStore'
-import { MOULD_STATES, WIRE_MATERIALS, type MouldInput, type MouldStateValue, type WireMaterial } from '../types/mould'
+import { MOULD_STATES, WIRE_MATERIALS, type Mould, type MouldInput, type MouldStateValue, type WireMaterial } from '../types/mould'
+import type { MouldRepairInput } from '../types/mould-repair'
 import { calculateMeshDensity } from '../utils/stripe'
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
 
 const emptyMouldForm: MouldInput = {
   mouldNo: '',
@@ -21,6 +27,10 @@ const emptyMouldForm: MouldInput = {
   state: '在用',
 }
 
+function makeRepairForm(mould: Mould): MouldRepairInput {
+  return { mouldId: mould.id ?? -1, repairDate: todayIso(), repairer: mould.weaver, replacedLengthCm: 10, note: '' }
+}
+
 export default function MouldLedger() {
   const moulds = useMouldStore((state) => state.moulds)
   const error = useMouldStore((state) => state.error)
@@ -29,9 +39,17 @@ export default function MouldLedger() {
   const setMouldState = useMouldStore((state) => state.setMouldState)
   const runs = useRunStore((state) => state.sheetRuns)
   const loadRuns = useRunStore((state) => state.loadRuns)
+  const repairs = useMouldRepairStore((state) => state.repairs)
+  const repairError = useMouldRepairStore((state) => state.error)
+  const loadRepairs = useMouldRepairStore((state) => state.loadRepairs)
+  const addRepair = useMouldRepairStore((state) => state.addRepair)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<MouldInput>(emptyMouldForm)
   const [submitting, setSubmitting] = useState(false)
+  const [repairTarget, setRepairTarget] = useState<Mould | null>(null)
+  const [repairForm, setRepairForm] = useState<MouldRepairInput | null>(null)
+  const [historyTarget, setHistoryTarget] = useState<Mould | null>(null)
+  const [repairSubmitting, setRepairSubmitting] = useState(false)
   const { mmPitchToThreadsPerCm } = useUnitConvert()
   const {
     mouldNo,
@@ -47,7 +65,53 @@ export default function MouldLedger() {
   useEffect(() => {
     void loadMoulds()
     void loadRuns()
-  }, [loadMoulds, loadRuns])
+    void loadRepairs()
+  }, [loadMoulds, loadRepairs, loadRuns])
+
+  const repairGroups = useMemo(() => {
+    const groups = new Map<number, { count: number; latestDate: string }>()
+    for (const repair of repairs) {
+      const current = groups.get(repair.mouldId)
+      if (!current) {
+        groups.set(repair.mouldId, { count: 1, latestDate: repair.repairDate })
+      } else {
+        current.count += 1
+        if (repair.repairDate > current.latestDate) current.latestDate = repair.repairDate
+      }
+    }
+    return groups
+  }, [repairs])
+
+  const historyRepairs = useMemo(
+    () => (historyTarget?.id === undefined ? [] : repairs.filter((repair) => repair.mouldId === historyTarget.id)),
+    [historyTarget, repairs],
+  )
+
+  const repairFormValid = repairForm !== null
+    && Boolean(repairForm.repairer.trim())
+    && Boolean(repairForm.repairDate)
+    && repairForm.replacedLengthCm > 0
+    && Boolean(repairForm.note.trim())
+
+  const openRepairDialog = (mould: Mould) => {
+    setRepairTarget(mould)
+    setRepairForm(makeRepairForm(mould))
+  }
+
+  const updateRepairForm = <K extends keyof MouldRepairInput,>(key: K, value: MouldRepairInput[K]) => {
+    setRepairForm((current) => (current ? { ...current, [key]: value } : current))
+  }
+
+  const handleRepairSubmit = async () => {
+    if (!repairForm || !repairFormValid) return
+    setRepairSubmitting(true)
+    const created = await addRepair({ ...repairForm, repairer: repairForm.repairer.trim(), note: repairForm.note.trim() })
+    setRepairSubmitting(false)
+    if (created) {
+      setRepairTarget(null)
+      setRepairForm(null)
+    }
+  }
 
   const calculatedDensity = useMemo(
     () => calculateMeshDensity(form.wireDiameter, form.stripeGap),
@@ -78,14 +142,14 @@ export default function MouldLedger() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, alignItems: { xs: 'flex-start', md: 'center' }, flexDirection: { xs: 'column', md: 'row' } }}>
         <Box>
           <Typography component="h1" variant="h3" color="#344a34">纸帘台帐</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>维护帘框尺寸、丝材与帘纹密度，并登记修补状态。</Typography>
+          <Typography color="text.secondary" sx={{ mt: 0.75 }}>维护帘框尺寸、丝材与帘纹密度，每次修补都留档：修补人、日期、换丝长度与说明。</Typography>
         </Box>
         <Button variant="contained" size="large" onClick={() => setShowForm((current) => !current)} data-testid="new-mould">
           {showForm ? '收起登记' : '新建纸帘'}
         </Button>
       </Box>
 
-      {error && <Alert severity="warning">{error}</Alert>}
+      {(error || repairError) && <Alert severity="warning">{error ?? repairError}</Alert>}
 
       {showForm && (
         <Card data-testid="form-mould" sx={{ borderColor: '#9eb096' }}>
@@ -188,7 +252,7 @@ export default function MouldLedger() {
       </Card>
 
       <TableContainer component={Card}>
-        <Table sx={{ minWidth: 920 }}>
+        <Table sx={{ minWidth: 1080 }}>
           <TableHead>
             <TableRow>
               <TableCell>帘号 / 尺寸</TableCell>
@@ -196,6 +260,7 @@ export default function MouldLedger() {
               <TableCell>间距 / 密度</TableCell>
               <TableCell>编帘匠人</TableCell>
               <TableCell>工序引用</TableCell>
+              <TableCell>修补档案</TableCell>
               <TableCell>状态</TableCell>
               <TableCell align="right">操作</TableCell>
             </TableRow>
@@ -204,6 +269,7 @@ export default function MouldLedger() {
             {filteredMoulds.map((mould) => {
               const relatedRuns = runs.filter((run) => run.mouldId === mould.id)
               const latestRun = relatedRuns[0]
+              const repairSummary = mould.id === undefined ? undefined : repairGroups.get(mould.id)
               return (
                 <TableRow key={mould.id ?? mould.mouldNo} data-testid="row-mould" hover>
                   <TableCell>
@@ -223,30 +289,180 @@ export default function MouldLedger() {
                     <Typography variant="body2">{relatedRuns.length} 槽工序</Typography>
                     <Typography variant="caption" color="text.secondary">{latestRun ? `最近 ${latestRun.runDate}` : '尚无关联'}</Typography>
                   </TableCell>
+                  <TableCell data-testid={`repair-summary-${mould.id ?? mould.mouldNo}`}>
+                    {repairSummary ? (
+                      <>
+                        <Typography variant="body2" sx={{ fontWeight: 650 }}>累计 {repairSummary.count} 次</Typography>
+                        <Typography variant="caption" color="text.secondary">最近 {repairSummary.latestDate}</Typography>
+                      </>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">未修过</Typography>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Chip size="small" color={mould.state === '在用' ? 'success' : mould.state === '待修补' ? 'warning' : 'default'} label={mould.state} />
                   </TableCell>
                   <TableCell align="right">
-                    <Button
-                      size="small"
-                      variant={mould.state === '待修补' ? 'contained' : 'outlined'}
-                      disabled={mould.state === '退役' || mould.id === undefined}
-                      onClick={() => {
-                        if (mould.id !== undefined) void setMouldState(mould.id, mould.state === '待修补' ? '在用' : '待修补')
-                      }}
-                    >
-                      {mould.state === '待修补' ? '完成修补' : '登记修补'}
-                    </Button>
+                    <Stack direction="row" spacing={1} justifyContent="flex-end" flexWrap="wrap" useFlexGap>
+                      {mould.state === '在用' && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={mould.id === undefined}
+                          onClick={() => openRepairDialog(mould)}
+                          data-testid={`open-repair-${mould.id ?? mould.mouldNo}`}
+                        >
+                          登记修补
+                        </Button>
+                      )}
+                      {mould.state === '待修补' && (
+                        <Button
+                          size="small"
+                          variant="contained"
+                          disabled={mould.id === undefined}
+                          onClick={() => {
+                            if (mould.id !== undefined) void setMouldState(mould.id, '在用')
+                          }}
+                          data-testid={`finish-repair-${mould.id ?? mould.mouldNo}`}
+                        >
+                          完成修补
+                        </Button>
+                      )}
+                      <Button
+                        size="small"
+                        variant={repairSummary ? 'text' : 'outlined'}
+                        disabled={mould.id === undefined}
+                        onClick={() => setHistoryTarget(mould)}
+                        data-testid={`repair-history-${mould.id ?? mould.mouldNo}`}
+                      >
+                        修补记录{repairSummary ? `（${repairSummary.count}）` : ''}
+                      </Button>
+                    </Stack>
                   </TableCell>
                 </TableRow>
               )
             })}
             {filteredMoulds.length === 0 && (
-              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 5 }}>没有符合筛选条件的纸帘</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} align="center" sx={{ py: 5 }}>没有符合筛选条件的纸帘</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </TableContainer>
+
+      <Dialog
+        open={repairTarget !== null && repairForm !== null}
+        onClose={() => { setRepairTarget(null); setRepairForm(null) }}
+        maxWidth="sm"
+        fullWidth
+        data-testid="dialog-repair"
+      >
+        {repairTarget && repairForm && (
+          <>
+            <DialogTitle>
+              登记修补 · {repairTarget.mouldNo}
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontWeight: 400 }}>
+                保存后纸帘标记为“待修补”，修好前不会出现在抄纸工序的纸帘下拉中；点“完成修补”后恢复可选。
+              </Typography>
+            </DialogTitle>
+            <DialogContent>
+              <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="修补日期"
+                    type="date"
+                    value={repairForm.repairDate}
+                    onChange={(event) => updateRepairForm('repairDate', event.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ 'data-testid': 'field-repairDate' }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="修补人"
+                    value={repairForm.repairer}
+                    onChange={(event) => updateRepairForm('repairer', event.target.value)}
+                    inputProps={{ 'data-testid': 'field-repairer' }}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    type="number"
+                    label="换掉的丝段长度"
+                    value={repairForm.replacedLengthCm}
+                    onChange={(event) => updateRepairForm('replacedLengthCm', Number(event.target.value))}
+                    inputProps={{ min: 1, step: 1, 'data-testid': 'field-replacedLengthCm' }}
+                    InputProps={{ endAdornment: 'cm' }}
+                    helperText="本次修补整段换掉的帘丝长度"
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={2}
+                    label="修补说明"
+                    placeholder="例如：中段竹丝磨损跳线，换丝后复测帘纹正常"
+                    value={repairForm.note}
+                    onChange={(event) => updateRepairForm('note', event.target.value)}
+                    inputProps={{ 'data-testid': 'field-repairNote' }}
+                  />
+                </Grid>
+              </Grid>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 2.5 }}>
+              <Button onClick={() => { setRepairTarget(null); setRepairForm(null) }}>取消</Button>
+              <Button
+                variant="contained"
+                onClick={handleRepairSubmit}
+                disabled={repairSubmitting || !repairFormValid}
+                data-testid="submit-repair"
+              >
+                保存并标记待修补
+              </Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={historyTarget !== null}
+        onClose={() => setHistoryTarget(null)}
+        maxWidth="sm"
+        fullWidth
+        data-testid="dialog-repair-history"
+      >
+        {historyTarget && (
+          <>
+            <DialogTitle>
+              修补记录 · {historyTarget.mouldNo}
+              <Chip size="small" sx={{ ml: 1 }} label={`累计 ${historyRepairs.length} 次`} />
+            </DialogTitle>
+            <DialogContent>
+              {historyRepairs.length === 0 ? (
+                <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>这张帘子还没有修补记录。</Typography>
+              ) : (
+                <Stack spacing={1.5} divider={<Divider flexItem />} sx={{ mt: 1 }}>
+                  {historyRepairs.map((repair) => (
+                    <Box key={repair.id} data-testid={`repair-record-${repair.id}`}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+                        <Typography sx={{ fontWeight: 650 }}>{repair.repairDate} · {repair.repairer}</Typography>
+                        <Chip size="small" variant="outlined" label={`换丝 ${repair.replacedLengthCm} cm`} />
+                      </Box>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{repair.note}</Typography>
+                    </Box>
+                  ))}
+                </Stack>
+              )}
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 2.5 }}>
+              <Button onClick={() => setHistoryTarget(null)}>关闭</Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
     </Stack>
   )
 }

@@ -63,6 +63,7 @@ export default function RunBoard() {
   }, [loadBatches, loadMoulds, loadRuns])
 
   const mouldById = useMemo(() => new Map(moulds.map((mould) => [mould.id, mould])), [moulds])
+  const usableMoulds = useMemo(() => moulds.filter((mould) => mould.state === '在用'), [moulds])
   const batchById = useMemo(() => new Map(batches.map((batch) => [batch.id, batch])), [batches])
   const filteredRuns = useMemo(
     () => runs.filter((run) => {
@@ -73,9 +74,25 @@ export default function RunBoard() {
     }),
     [dateFilter, mouldById, mouldFilter, runs],
   )
-  const selectedMould = mouldById.get(form.mouldId) ?? moulds[0]
-  const formDeviation = calculateDeviation(form.measuredGap, selectedMould?.stripeGap ?? form.measuredGap)
+  const selectedMould = mouldById.get(form.mouldId)
+  const selectableMould = selectedMould?.state === '在用' ? selectedMould : usableMoulds[0]
+  const effectiveMouldId = selectableMould?.id ?? form.mouldId
+  const formDeviation = calculateDeviation(form.measuredGap, selectableMould?.stripeGap ?? form.measuredGap)
   const latestRun = runs[0]
+
+  // 选中的纸帘进入待修补或退役时，自动切到第一张在用帘子，避免带病抄纸
+  useEffect(() => {
+    const current = mouldById.get(form.mouldId)
+    if (current && current.state !== '在用' && usableMoulds[0]?.id !== undefined) {
+      const fallback = usableMoulds[0]
+      setForm((prev) => ({
+        ...prev,
+        mouldId: fallback.id as number,
+        measuredGap: fallback.stripeGap,
+        deviation: 0,
+      }))
+    }
+  }, [form.mouldId, mouldById, usableMoulds])
 
   const updateForm = <K extends keyof SheetRunInput,>(key: K, value: SheetRunInput[K]) => {
     setForm((current) => ({ ...current, [key]: value }))
@@ -91,8 +108,9 @@ export default function RunBoard() {
 
   const handleSubmit = async () => {
     if (!form.runNo.trim() || !form.operator.trim() || form.measuredGap <= 0 || form.grammage <= 0) return
+    if (selectableMould?.id === undefined) return
     setSubmitting(true)
-    const created = await addRun({ ...form, runNo: form.runNo.trim(), operator: form.operator.trim(), deviation: formDeviation })
+    const created = await addRun({ ...form, mouldId: effectiveMouldId, runNo: form.runNo.trim(), operator: form.operator.trim(), deviation: formDeviation })
     setSubmitting(false)
     if (created) {
       setForm(emptyRunForm)
@@ -126,9 +144,9 @@ export default function RunBoard() {
             <Grid container spacing={2}>
               <Grid item xs={12} md={3}><TextField fullWidth label="工序编号" value={form.runNo} onChange={(event) => updateForm('runNo', event.target.value)} inputProps={{ 'data-testid': 'field-runNo' }} /></Grid>
               <Grid item xs={6} md={2.5}>
-                <TextField select fullWidth label="纸帘" value={form.mouldId} onChange={(event) => handleMouldChange(Number(event.target.value))} SelectProps={{ native: true, inputProps: { 'data-testid': 'field-mouldId' } }}>
+                <TextField select fullWidth label="纸帘" value={effectiveMouldId} onChange={(event) => handleMouldChange(Number(event.target.value))} SelectProps={{ native: true, inputProps: { 'data-testid': 'field-mouldId' } }} helperText="待修补、退役的帘子不可选用，修好后自动恢复">
                   {!moulds.some((mould) => mould.id === form.mouldId) && <option value={form.mouldId}>纸帘数据载入中</option>}
-                  {moulds.filter((mould) => mould.state !== '退役').map((mould) => <option key={mould.id} value={mould.id}>{mould.mouldNo} · {mould.stripeGap} mm</option>)}
+                  {usableMoulds.map((mould) => <option key={mould.id} value={mould.id}>{mould.mouldNo} · {mould.stripeGap} mm</option>)}
                 </TextField>
               </Grid>
               <Grid item xs={6} md={2.5}>
@@ -158,7 +176,7 @@ export default function RunBoard() {
             </Grid>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5, mt: 2.5 }}>
               <Button onClick={() => setShowForm(false)}>取消</Button>
-              <Button variant="contained" onClick={handleSubmit} disabled={submitting} data-testid="submit-run">保存工序</Button>
+              <Button variant="contained" onClick={handleSubmit} disabled={submitting || selectableMould?.id === undefined} data-testid="submit-run">保存工序</Button>
             </Box>
           </CardContent>
         </Card>
