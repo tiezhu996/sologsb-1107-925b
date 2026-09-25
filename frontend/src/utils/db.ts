@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import type { FiberBatch } from '../types/fiber-batch'
 import type { Mould } from '../types/mould'
+import type { MouldRepair } from '../types/mould-repair'
 import type { PaperSample } from '../types/paper-sample'
 import type { SheetRun } from '../types/sheet-run'
 import { calculateDeviation, calculateMeshDensity } from './stripe'
@@ -63,11 +64,19 @@ const seedSamples: PaperSample[] = [
   { id: 6, sampleNo: 'YZ-06', runId: 6, sizeMm: 260, stripeCount: 57, evenness: '均匀', archiveBin: '丙柜-01', schemaRev: 2 },
 ]
 
+const seedRepairs: MouldRepair[] = [
+  { id: 1, mouldId: 1, repairer: '周守良', repairDate: daysAgo(41), replacedLength: 12, note: '帘面上沿竹丝磨损起毛，整段换丝并重新绷紧。', schemaRev: 3 },
+  { id: 2, mouldId: 4, repairer: '林砚秋', repairDate: daysAgo(9), replacedLength: 18, note: '中部马尾丝崩断三股，换丝后张力不均，待复检后再上槽。', schemaRev: 3 },
+  { id: 3, mouldId: 5, repairer: '沈云舟', repairDate: daysAgo(133), replacedLength: 9, note: '左下角铜丝锈蚀，局部换丝并刷桐油养护。', schemaRev: 3 },
+  { id: 4, mouldId: 5, repairer: '沈云舟', repairDate: daysAgo(72), replacedLength: 15, note: '帘框变形导致横纹跑偏，换丝调校后仍有暗伤，建议退役。', schemaRev: 3 },
+]
+
 class GbPaperMillDatabase extends Dexie {
   moulds!: Table<Mould, number>
   fiberBatches!: Table<FiberBatch, number>
   sheetRuns!: Table<SheetRun, number>
   paperSamples!: Table<PaperSample, number>
+  mouldRepairs!: Table<MouldRepair, number>
 
   constructor() {
     super('gbpapermill-db')
@@ -96,6 +105,13 @@ class GbPaperMillDatabase extends Dexie {
         value.schemaRev = 2
       })
     })
+    this.version(3).stores({
+      moulds: '++id,&mouldNo,state,wireMaterial,schemaRev',
+      fiberBatches: '++id,&batchNo,material,beatingDegree,schemaRev',
+      sheetRuns: '++id,&runNo,mouldId,batchId,runDate,operator,schemaRev',
+      paperSamples: '++id,&sampleNo,runId,evenness,stripeCount,schemaRev',
+      mouldRepairs: '++id,mouldId,repairDate,repairer,schemaRev',
+    })
     this.on('populate', () => this.seed())
   }
 
@@ -104,6 +120,7 @@ class GbPaperMillDatabase extends Dexie {
     await this.fiberBatches.bulkAdd(plain(seedBatches))
     await this.sheetRuns.bulkAdd(plain(seedRuns))
     await this.paperSamples.bulkAdd(plain(seedSamples))
+    await this.mouldRepairs.bulkAdd(plain(seedRepairs))
   }
 }
 
